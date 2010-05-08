@@ -1,0 +1,19 @@
+SECTION
+-------
+
+Section is a drupal module for CCK, which lets you add a section field to your content type. 
+A section could have multiple value, and that's where this field is  usefull.
+A section has a Name & a value. For now, the section name is a textfield, and the section value could be a textfield or a textarea.
+
+Think of definition list, questions/answers, name & first name list...
+
+I made the module to avoid using cck3 dev branch with multigroup.
+
+
+Todo
+----
+
+* Support input format on textarea_widget
+* Support token
+* Support views integration
+* Provide more output formatter
