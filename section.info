@@ -1,0 +1,6 @@
+; $Id: link.info,v 1.2 2008/03/31 06:50:42 quicksketch Exp $
+name = Section
+description = Defines simple section field types (name + value).
+dependencies[] = content
+package = CCK
+core = 6.x

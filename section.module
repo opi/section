@@ -1,0 +1,500 @@
+<?php
+
+/*
+ * 
+    * Tell CCK about yourself (Field Settings):
+          o hook_field_info
+          o hook_field_settings
+          o hook_field 
+    * Tell CCK and Drupal how you’ll behave on node edit forms (Widget Settings):
+          o hook_widget_info
+          o hook_widget_settings
+          o hook_widget
+          o hook_elements 
+    * Tell Drupal how you’ll look when a node is viewed (Theming):
+          o hook_theme + theme_MY_ELEMENT
+          o custom formatters 
+*/
+
+
+
+/**
+ * Implementation of hook_field_info().
+ */
+function section_field_info() {
+  return array(
+    'section' => array(
+      'label' => t('Section'),
+      'description' => t('Store a basic section (name+value), used for definition list ... '),
+    ),
+  );
+}
+
+
+/**
+ * Implementation of hook_field_settings().
+ */
+function section_field_settings($op, $field) {
+    switch ($op) {
+
+        case 'form':
+            //print '<pre>';print_r($field);print '</pre>';
+            $form = array();
+            if ($field['widget']['type'] == 'section_textarea') {
+                $options = array(0 => t('Plain text'), 1 => t('Filtered text (user selects input format)'));
+                $form['text_processing'] = array(
+                    '#type' => 'radios',
+                    '#title' => t('Text processing'),
+                    '#default_value' => is_numeric($field['text_processing']) ? $field['text_processing'] : 0,
+                    '#options' => $options,
+                );
+                $form['max_length'] = array(
+                    '#type' => 'textfield',
+                    '#title' => t('Maximum length'),
+                    '#default_value' => is_numeric($field['max_length']) ? $field['max_length'] : '',
+                    '#required' => FALSE,
+                    '#element_validate' => array('_element_validate_integer_positive'),
+                    '#description' => t('The maximum length of the field in characters. Leave blank for an unlimited size.'),
+                );
+            }
+            return $form;
+
+        case 'save':
+            return array('text_processing' , 'max_length');
+
+
+        case 'database columns':
+            $columns['section_name'] = array('type' => 'varchar', 'length' => 255, 'not null' => FALSE, 'sortable' => TRUE, /* 'views' => TRUE */);
+            
+            if ($field['widget']['type'] == 'section_textfield') {
+                $columns['section_value'] = array('type' => 'varchar', 'length' => 255, 'not null' => FALSE, 'sortable' => TRUE, /* 'views' => TRUE */);
+            }
+            elseif ($field['widget']['type'] == 'section_textarea') {
+                $columns['section_value'] = array('type' => 'text', 'size' => 'big', 'not null' => FALSE, 'sortable' => TRUE, /* 'views' => TRUE */);
+                if (!empty($field['text_processing'])) {
+                    $columns['format'] = array('type' => 'int', 'unsigned' => TRUE, 'not null' => FALSE, 'views' => FALSE);
+                }
+            }
+            
+
+            return $columns;
+
+
+    }
+}
+
+
+
+/**
+ * Implementation of hook_field().
+ */
+function section_field($op, &$node, $field, &$items, $teaser, $page) {
+    switch ($op) {
+
+    case 'validate':
+      $allowed_values = content_allowed_values($field);
+      if (is_array($items)) {
+        foreach ($items as $delta => $item) {
+            if (!empty($item['section_name'])) {
+                if (count($allowed_values) && !array_key_exists($item['section_name'], $allowed_values)) {
+                    $error_element = $field['field_name'] . '][' . $delta . '][section_name';
+                    form_set_error($error_element, t('%name: illegal value.', array('%name' => t($field['widget']['label']))));
+                }
+                if (!empty($field['widget']['name_size']) && drupal_strlen($item['section_name']) > $field['widget']['name_size']) {
+                    $error_element = $field['field_name'] . '][' . $delta . '][section_name';
+                    form_set_error($error_element, t('%name: the value may not be longer than %max characters.', array('%name' => $field['widget']['name_label'], '%max' => $field['widget']['name_size'])));
+                }
+                if ($field['widget']['type'] == 'section_textfield') {
+                    if (!empty($field['widget']['value_size']) && drupal_strlen($item['section_value']) > $field['widget']['value_size']) {
+                        $error_element = $field['field_name'] . '][' . $delta . '][section_value';
+                        form_set_error($error_element, t('%name: the value may not be longer than %max characters.', array('%name' => $field['widget']['value_label'], '%max' => $field['widget']['value_size'])));
+                    }
+                }
+                elseif ($field['widget']['type'] == 'section_textarea') {
+                    if (!empty($field['max_length']) && drupal_strlen($item['section_value']) > $field['max_length']) {
+                        $error_element = $field['field_name'] . '][' . $delta . '][section_value';
+                        form_set_error($error_element, t('%name: the value may not be longer than %max characters.', array('%name' => $field['widget']['value_label'], '%max' => $field['max_length'])));
+                    }                    
+                }
+
+            }
+        }
+      }
+      return $items;
+
+    case 'presave':
+        foreach ($items as $delta => $value) {
+            _section_process($items[$delta], $delta, $field, $node);
+        }
+        break;
+
+    case 'sanitize':
+        foreach ($items as $delta => $item) {
+            _section_sanitize($items[$delta], $delta, $field, $node);
+        }
+        break;
+
+    }
+}
+
+/**
+ * Implementation of hook_content_is_empty().
+ */
+function section_content_is_empty($item, $field) {
+  if (empty($item['section_name']) && (string)$item['section_name'] !== '0') {
+    return TRUE;
+  }
+  return FALSE;
+}
+
+
+
+/**
+ * Implementation of hook_widget_info().
+ */
+function section_widget_info() {
+    return array(
+        'section_textfield' => array(
+            'label' => t('Section TextField'),
+            'field types' => array('section'),
+            'multiple values' => CONTENT_HANDLE_CORE,
+            'callbacks' => array(
+                'default value' => CONTENT_CALLBACK_DEFAULT,
+            ),
+        ),
+        'section_textarea' => array(
+            'label' => t('Section TextArea'),
+            'field types' => array('section'),
+            'multiple values' => CONTENT_HANDLE_CORE,
+            'callbacks' => array(
+                'default value' => CONTENT_CALLBACK_DEFAULT,
+            ),
+        ),
+    );
+}
+
+
+/**
+ * Implementation of FAPI hook_elements().
+ */
+function section_widget_settings($op, $widget) {
+    switch ($op) {
+        case 'form':
+            $form = array();
+            $name_label = (isset($widget['name_label'])) ? $widget['name_label'] : t("Section Name");
+            $name_size = (isset($widget['name_size']) && is_numeric($widget['name_size'])) ? $widget['name_size'] : 40;
+
+            $value_label = (isset($widget['value_label'])) ? $widget['value_label'] : t("Section Value");
+            $value_size = (isset($widget['value_size']) && is_numeric($widget['value_size'])) ? $widget['value_size'] : 80;
+            $value_rows = (isset($widget['value_rows']) && is_numeric($widget['value_rows'])) ? $widget['value_rows'] : 3;
+
+            $form['name_label'] = array(
+                '#type' => 'textfield',
+                '#title' => t('Label of section_name textfield'),
+                '#default_value' => $name_label,
+                //'#element_validate' => array('_element_validate_integer_positive'),
+                '#required' => TRUE,
+            );
+            $form['name_size'] = array(
+                '#type' => 'textfield',
+                '#title' => t('Size of section_name textfield'),
+                '#default_value' => $name_size,
+                '#element_validate' => array('_element_validate_integer_positive'),
+                '#required' => TRUE,
+            );
+
+            $form['value_label'] = array(
+                '#type' => 'textfield',
+                '#title' => t('Label of section_value textfield'),
+                '#default_value' => $value_label,
+                //'#element_validate' => array('_element_validate_integer_positive'),
+                '#required' => TRUE,
+            );
+            
+            if ($widget['type'] == 'section_textfield') {
+                $form['value_rows'] = array('#type' => 'hidden', '#value' => $value_rows);
+                $form['value_size'] = array(
+                    '#type' => 'textfield',
+                    '#title' => t('Size of section_value textfield'),
+                    '#default_value' => $value_size,
+                    '#element_validate' => array('_element_validate_integer_positive'),
+                    '#required' => TRUE,
+                );
+            }
+            elseif ($widget['type'] == 'section_textarea') {
+                $form['value_size'] = array('#type' => 'hidden', '#value' => $value_size);
+                $form['value_rows'] = array(
+                    '#type' => 'textfield',
+                    '#title' => t('section_value Rows'),
+                    '#default_value' => $value_rows,
+                    '#element_validate' => array('_element_validate_integer_positive'),
+                    '#required' => TRUE,
+                );
+            }
+            return $form;
+
+        case 'save':
+            return array('name_label','name_size', 'value_label', 'value_size', 'value_rows');
+    }
+
+}
+
+
+/**
+ * Implementation of hook_widget().
+ */
+function section_widget(&$form, &$form_state, $field, $items, $delta = 0) {
+    $element = array(
+        '#type' => $field['widget']['type'],
+        '#default_value' => isset($items[$delta]) ? $items[$delta] : '',
+        '#title' => $field['widget']['label'],
+        '#weight' => $field['widget']['weight'],
+        '#description' => $field['widget']['description'],
+        '#required' => $field['required'],
+        '#field' => $field,
+    );
+    return $element;
+}
+
+
+
+/**
+ * Implementation of FAPI hook_elements().
+ */
+function section_elements() {
+    return array(
+        'section_textfield' => array(
+            '#input' => TRUE,
+            '#columns' => array('section_name', 'section_value'),
+            '#delta' => 0,
+            '#process' => array('section_textfield_process'),
+        ),
+        'section_textarea' => array(
+            '#input' => TRUE,
+            '#columns' => array('section_name', 'section_value', 'format'), '#delta' => 0,
+            '#process' => array('section_textarea_process'),
+            '#filter_value' => FILTER_FORMAT_DEFAULT,
+        ),
+    );
+}
+
+
+
+/**
+ * Process an individual element.
+ *
+ * Build the form element. When creating a form using FAPI #process,
+ * note that $element['#value'] is already set.
+ *
+ * The $fields array is in $form['#field_info'][$element['#field_name']].
+ */
+function section_textfield_process($element, $edit, $form_state, $form) {
+    $field = $form['#field_info'][$element['#field_name']];
+    $field_key = $element['#columns'][0];
+    $delta = $element['#delta'];
+
+    $element['section_name'] = array(
+        '#type' => 'textfield',
+        '#title' => $field['widget']['name_label'],
+        '#description' => content_filter_xss($field['widget']['description']),
+        '#required' => $element['#required'],
+        '#maxlength' => 255,
+        '#size' => !empty($field['widget']['name_size']) ? $field['widget']['name_size'] : 80,
+        '#attributes' => array('class' => 'form-text section-element section-name', 'dir' => 'ltr'),
+        '#default_value' => isset($element['#value']['section_name']) ? $element['#value']['section_name'] : NULL,
+    );
+    $element['section_value'] = array(
+        '#type' => 'textfield',
+        '#title' => $field['widget']['value_label'],
+        '#description' => content_filter_xss($field['widget']['description']),
+        '#required' => $element['#required'],
+        '#maxlength' => 255,
+        '#size' => !empty($field['widget']['section_size']) ? $field['widget']['section_size'] : 80,
+        '#attributes' => array('class' => 'form-text section-element section-value', 'dir' => 'ltr'),
+        '#default_value' => isset($element['#value']['section_value']) ? $element['#value']['section_value'] : NULL,
+    );
+
+    return $element;
+}
+
+function section_textarea_process($element, $edit, $form_state, $form) {
+    $field = $form['#field_info'][$element['#field_name']];
+    $field_key = $element['#columns'][0];
+    $delta = $element['#delta'];
+
+    $element['section_name'] = array(
+        '#type' => 'textfield',
+        '#title' => $field['widget']['name_label'],
+        '#description' => content_filter_xss($field['widget']['description']),
+        '#required' => $element['#required'],
+        '#size' => !empty($field['widget']['name_size']) ? $field['widget']['name_size'] : 80,
+        '#attributes' => array('class' => 'form-text section-element section-name', 'dir' => 'ltr'),
+        '#default_value' => isset($element['#value']['section_name']) ? $element['#value']['section_name'] : NULL,
+    );
+    $element['section_value'] = array(
+        '#type' => 'textarea',
+        '#title' => $field['widget']['value_label'],
+        '#description' => content_filter_xss($field['widget']['description']),
+        '#required' => $element['#required'],
+        '#rows' => !empty($field['widget']['value_rows']) ? $field['widget']['value_rows'] : 5,
+        '#attributes' => array('class' => 'form-textarea section-element section-value', 'dir' => 'ltr'), // TODO clean class
+        '#default_value' => isset($element['#value']['section_value']) ? $element['#value']['section_value'] : NULL,
+    );
+    
+/*
+  if (!empty($field['text_processing'])) {
+    $filter_key = $element['section_value']['#columns'][1];
+    $format = isset($element['#value'][$filter_key]) ? $element['#value'][$filter_key] : FILTER_FORMAT_DEFAULT;
+    $parents = array_merge($element['#parents'] , array($filter_key));
+    $element[$filter_key] = filter_form($format, 1, $parents);
+  }
+*/
+
+
+
+    return $element;
+}
+
+
+
+
+function section_theme() {
+    return array(
+        'section_textarea' => array(
+            'arguments' => array('element' => NULL),
+        ),
+        'section_textfield' => array(
+            'arguments' => array('element' => NULL),
+        ),
+        'section_formatter_default' => array(
+            'arguments' => array('element' => NULL),
+        ),
+        'section_formatter_definition_list' => array(
+            'arguments' => array('element' => NULL),
+        ),
+    );
+}
+
+
+function theme_section($element) {
+    return $element['#children'];
+}
+
+
+function theme_section_textfield($element) {
+    drupal_add_css(drupal_get_path('module', 'section') .'/section.css');
+
+    $section_name_size = $element['section_name']['#size'];
+    $section_value_size = $element['section_value']['#size'];
+    $section_name_width = round( 100 * $section_name_size / ($section_name_size + $section_value_size), -1);
+    $section_value_width = round( 100 * $section_value_size / ($section_name_size + $section_value_size), -1);
+
+    
+    $output = '<div class="section-field-name section-field-column section-field-column-'. $section_name_width .'">'. theme('textfield', $element['section_name']) . '</div>';
+    $output .= '<div class="section-field-value section-field-column section-field-column-'. $section_value_width .'">'. theme('textfield', $element['section_value']) . '</div>';
+
+
+    return $output;
+}
+function theme_section_textarea($element) {
+    drupal_add_css(drupal_get_path('module', 'section') .'/section.css');
+    
+    $output = '<div class="section-field-name">'. theme('textfield', $element['section_name']) . '</div>';
+    $output .= '<div class="section-field-value">'. theme('textarea', $element['section_value']) . '</div>';
+
+
+    return $output;
+}
+
+
+/**
+ * Implementation of hook_field_formatter_info().
+ */
+function section_field_formatter_info() {
+    return array(
+        'default' => array(
+            'label' => t('Default'),
+            'field types' => array('section'),
+            'multiple values' => CONTENT_HANDLE_CORE,
+        ),
+        'definition_list' => array(
+            'label' => t('Definition list (dl, dt, dd)'),
+            'field types' => array('section'),
+            'multiple values' => CONTENT_HANDLE_CORE,
+        ),
+    );
+}
+
+/**
+ * Theme function for 'default' section field formatter.
+ */
+function theme_section_formatter_default($element) {
+
+    $output = '<div class="section-item>"';
+    if (!empty($element['#item']['section_name'])) {
+        $output .= '<span class="section-name">' . $element['#item']['section_name'] . ', </span>';
+    }
+    if (!empty($element['#item']['section_value'])) {
+        $output .= '<span class="section-value">' . $element['#item']['section_value'] . '</span>';
+    }
+    $output .= '</div>';
+
+    return $output;  
+}
+
+
+/**
+ * Theme function for 'definitionlist' section field formatter.
+ */
+function theme_section_formatter_definition_list($element) {
+
+    $output = '<dl>';
+    if (!empty($element['#item']['section_name'])) {
+        $output .= '<dt>' . $element['#item']['section_name'] . ':</dt>';
+    }
+    if (!empty($element['#item']['section_value'])) {
+        $output .= '<dd>' . $element['#item']['section_value'] . '</dd>';
+    }
+    $output .= '</dl>';
+
+    return $output;  
+}
+
+
+
+
+/* ****************************************************************** */
+
+function _section_sanitize(&$item, $delta, &$field, &$node) {
+    // Don't try to process empty section.
+    if (empty($item['name']) && empty($item['value'])) {
+        return;
+    }
+
+    if (!empty($field['text_processing'])) {
+        $check = is_null($node) || (isset($node->build_mode) && $node->build_mode == NODE_BUILD_PREVIEW);
+        $text = isset($item['value']) ? check_markup($item['value'], $item['format'], $check) : '';
+    }
+    else {
+        $text = check_plain($item['value']);
+    }
+    $items[$delta]['safe'] = $text;
+
+    // Add the widget label.
+    $item['label'] = $field['widget']['label'];
+}
+
+
+function _section_process(&$item, $delta = 0, $field, $node) {
+  // Trim whitespace from name.
+  $item['name'] = trim($item['name']);
+}
+
+
+
+
+
+
+
+
+      
